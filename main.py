@@ -7,6 +7,7 @@ This is the main program for the analysis of gamma, neutrona and cherenkov data
 using machine learning algorithms.
 """
 
+
 import os
 import sys
 import numpy as np
@@ -14,12 +15,15 @@ import pandas as pd
 pd.set_option('display.max_columns', 500)
 import matplotlib
 import matplotlib.pyplot as plt
-from sklearn.preprocessing import StandardScaler
+import random
+import math
+#import pydot
+
+from matplotlib.legend_handler import HandlerLine2D
 from sklearn import preprocessing
 from sklearn import metrics
 from sklearn import decomposition
-from mpl_toolkits.mplot3d import axes3d
-
+from sklearn.preprocessing import StandardScaler
 from sklearn.cross_decomposition import PLSRegression
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.multioutput import MultiOutputRegressor
@@ -32,16 +36,10 @@ from sklearn.model_selection import RandomizedSearchCV
 from sklearn.model_selection import ShuffleSplit
 from sklearn.metrics import accuracy_score
 from sklearn.model_selection import learning_curve
-
-from matplotlib.legend_handler import HandlerLine2D
-    
-
-import random
-import math
-
-from sklearn.tree import export_graphviz
-#import pydot
+from sklearn.tree import export_graphviz 
+from mpl_toolkits.mplot3d import axes3d
    
+
 def normalize_activities(pndfrm,feat):
     #Normalize selected gamma activities to 1 (for each feature).
     newFrame=pndfrm.copy()
@@ -67,8 +65,7 @@ def calculate_activity(dtaFrm):
  
         
 def pca_with_scoresPlot(score, coeff, dataframe, feat, labels=None):
-    #Plots the PC-score (or value) plot from a PCA analysis for all data points. 
-    #This plot also slows the contribution by the diffrent features to the PCs
+    #Plots the PC-score (value) from a PCA analysis for all data points. Shows the contribution by  diffrent features to the PCs
     #xs is PC1; ys is PC2 
     pc1s = score[:,0]
     pc2s = score[:,1]
@@ -88,25 +85,26 @@ def pca_with_scoresPlot(score, coeff, dataframe, feat, labels=None):
         else:
             plt.text(coeff[i,0]* 1.15, coeff[i,1] * 1.15, labels[i], color = 'g', ha = 'center', va = 'center')
 
-def applynoise(x):
+def applynoise(x, columns):
     #Generates noise from a random Gaussian distribution with mean at 1 and a sigma of 0.05.
-    return x*random.normalvariate(1,0.05)
+    for col in columns:
+        x[col]*random.normalvariate(1,0.05)
+    return x
 
 
-
-def RndForReg(X_train, y_train, X_test, Y_test, par):
-    plot_components=False
+def RndForReg(X_train, y_train, X_test, Y_test, par, fn):
+    plot_components=False  
      
-    bootstrap=par['bootstrap']
-    max_depth=par['max_depth']
-    max_features=par['max_features']
-    min_samples_leaf=par['min_samples_leaf']
-    min_samples_split=par['min_samples_split']
-    n_estimators=par['n_estimators']
-   
+    boot=par['bootstrap']
+    max_dep=par['max_depth']
+    max_feat=['max_features']
+    min_samp_leaf=par['min_samples_leaf']
+    min_samp_split=par['min_samples_split']
+    n_est=par['n_estimators']  
+    max_f=len(fn)
     
     mse_rF = []   
-    regressor = RandomForestRegressor(bootstrap=True, max_depth=25, max_features=5, min_samples_leaf=3, min_samples_split=6, n_estimators= 30)
+    regressor = RandomForestRegressor(bootstrap=boot, max_depth=max_dep, max_features=max_f, min_samples_leaf=min_samp_leaf, min_samples_split=min_samp_split, n_estimators= n_est)
     regressor.fit(X_train, y_train.flatten())
     y_pred = regressor.predict(X_test)
     mse_p = mean_squared_error(Y_test, y_pred)
@@ -121,28 +119,10 @@ def RndForReg(X_train, y_train, X_test, Y_test, par):
             plt.ylabel('MSE')
             plt.title('RandomForest')
             plt.xlim(xmin=-1)
- 
-        plt.show()        
-        
-    #regressor = RandomForestRegressor(n_estimators=10, max_depth=16,random_state=0,min_samples_leaf=5)  
-    #regressor.fit(X_train, y_train.values.ravel())  
-    #y_pred = regressor.predict(X_test) 
-    #print(metrics.accuracy_score(Y_test, y_pred)) #Is there something similar for continous values?
+        plt.show()            
     
-    #VISUALIZATION
-    # Pull out one tree from the forest
-    #tree = regressor.estimators_[5]
+    return y_pred, regressor
 
-    # Export the image to a dot file
-    #export_graphviz(tree, out_file = 'tree.dot', feature_names = feature_list, rounded = True, precision = 1)
-
-    # Use dot file to create a graph
-    #(graph, ) = pydot.graph_from_dot_file('tree.dot')
-
-    # Write graph to a png file
-    #graph.write_png('tree.png')
-
-    return y_pred, regressor#, tree.png
 
 def PLSReg(X_train, y_train, X_test, Y_test):
     # Define PLS object
@@ -160,7 +140,71 @@ def evaluate(model, test_features, test_labels):
     return accuracy
 
 
-def Grid_Search_CV_RFR(X_train, y_train, X_test, y_test, sel_features):
+def calc_learning_curves(estimator, X_train, y_train, X_test, y_test):
+    #A learning curve shows the validation and training score of an estimator for varying numbers 
+    #of training samples. It is a tool to find out how much we benefit from adding more training 
+    #data and whether the estimator suffers more from a variance error or a bias error.
+    
+    train_score = []
+    test_score = []
+    training_set_size = np.linspace(5, len(X_train), 20, dtype='int')
+
+    for i in training_set_size:
+        # fit the model only using limited training examples
+        estimator.fit(X_train[0:i, :], y_train[0:i].flatten())
+        train_rmse = np.sqrt(metrics.mean_squared_error(y_train[0:i, :], estimator.predict(X_train[0:i, :])))
+        test_rmse = np.sqrt (metrics.mean_squared_error(y_test, estimator.predict(X_test)))
+
+        train_score.append(train_rmse)
+        test_score.append(test_rmse)
+    
+    return training_set_size, train_score, test_score
+
+
+def under_or_overfitting(X_train, y_train, X_test, y_test, fn):
+    rmse_estimator=[]
+    estimator = np.arange(5, 50)
+   
+    for i in estimator:
+        regressor_estimator = RandomForestRegressor(n_estimators=i, max_depth=10, max_features=len(fn), min_samples_leaf=2, min_samples_split=3)
+        regressor_estimator.fit(X_train, y_train.flatten())
+        y_pred_estimator = regressor_estimator.predict(X_test)
+     
+        rmse_p_estimator = np.sqrt(metrics.mean_squared_error(y_test, y_pred_estimator))
+        rmse_estimator.append(rmse_p_estimator)
+    rmse_min_estimator = np.argmin(rmse_estimator) 
+    
+
+    rmse_depth=[]
+    depth = np.arange(1, 20)
+    for i in depth:
+        regressor_depth = RandomForestRegressor(n_estimators=10, max_depth=i, max_features=len(fn), min_samples_leaf=2, min_samples_split=3)
+        #regressor_depth = RandomForestRegressor(n_estimators=10, max_depth=i, max_features=5, min_samples_leaf=2, min_samples_split=3)
+
+        regressor_depth.fit(X_train, y_train.flatten())
+        y_pred_depth = regressor_depth.predict(X_test)
+     
+        rmse_p_depth = np.sqrt(metrics.mean_squared_error(y_test, y_pred_depth))
+        rmse_depth.append(rmse_p_depth)
+    rmse_min_depth = np.argmin(rmse_depth) 
+    
+    rmse_feat=[]
+
+    feat = np.arange(1, len(fn)+1)
+    for i in feat:
+        regressor_feat = RandomForestRegressor(n_estimators=10, max_depth=10, max_features=i, min_samples_leaf=2, min_samples_split=3)
+        regressor_feat.fit(X_train, y_train.flatten())
+        y_pred_feat = regressor_feat.predict(X_test)
+        #feat_imp = y_pred_feat.feature_importances_
+     
+        rmse_p_feat = np.sqrt(metrics.mean_squared_error(y_test, y_pred_feat))
+        rmse_feat.append(rmse_p_feat)
+    rmse_min_feat = np.argmin(rmse_feat) 
+
+    return rmse_min_estimator, rmse_estimator, estimator, rmse_min_depth, rmse_depth, depth, rmse_min_feat, rmse_feat, feat
+
+
+def Grid_Search_CV_RFR(X_train, y_train, X_test, y_test):
     #Default RandomForestRegression
     rf = RandomForestRegressor()
     rf.fit(X_train, y_train.flatten())
@@ -198,75 +242,9 @@ def Grid_Search_CV_RFR(X_train, y_train, X_test, y_test, sel_features):
     #print('Optimised parameters in the fit are ', best_parameters)
     #grid_accuracy =   evaluate(best_estimator, X_test, y_test.flatten())  
     #print('base_accuracy={:0.5f}'.format(base_accuracy), 'grid_accuracy={:0.5f}'.format(grid_accuracy), '. Relative improvement of {:0.2f}%'.format( 100 * (grid_accuracy - base_accuracy) / base_accuracy)) 
-  
-
-#    feats = {} # a dict to hold feature_name: feature_importance
-#    for feature, importance in zip(sel_features, best_estimator.feature_importances_):
-#        feats[feature] = importance #add the name/value pair 
     
     return best_parameters, best_result, best_estimator
 
-
-def under_or_overfitting(X_train, y_train, X_test, y_test):
-
-    rmse_estimator=[]
-    estimator = np.arange(5, 50)
-    for i in estimator:
-        regressor_estimator = RandomForestRegressor(n_estimators=i, max_depth=10, max_features=5, min_samples_leaf=2, min_samples_split=3)
-        regressor_estimator.fit(X_train, y_train.flatten())
-        y_pred_estimator = regressor_estimator.predict(X_test)
-     
-        rmse_p_estimator = np.sqrt(metrics.mean_squared_error(y_test, y_pred_estimator))
-        rmse_estimator.append(rmse_p_estimator)
-    rmse_min_estimator = np.argmin(rmse_estimator) 
-    
-
-    rmse_depth=[]
-    depth = np.arange(1, 20)
-    for i in depth:
-        regressor_depth = RandomForestRegressor(n_estimators=10, max_depth=i, max_features=5, min_samples_leaf=2, min_samples_split=3)
-        regressor_depth.fit(X_train, y_train.flatten())
-        y_pred_depth = regressor_depth.predict(X_test)
-     
-        rmse_p_depth = np.sqrt(metrics.mean_squared_error(y_test, y_pred_depth))
-        rmse_depth.append(rmse_p_depth)
-    rmse_min_depth = np.argmin(rmse_depth) 
-    
-    rmse_feat=[]
-    feat = np.arange(1, 6)
-    for i in feat:
-        regressor_feat = RandomForestRegressor(n_estimators=10, max_depth=10, max_features=i, min_samples_leaf=2, min_samples_split=3)
-        regressor_feat.fit(X_train, y_train.flatten())
-        y_pred_feat = regressor_feat.predict(X_test)
-        #feat_imp = y_pred_feat.feature_importances_
-     
-        rmse_p_feat = np.sqrt(metrics.mean_squared_error(y_test, y_pred_feat))
-        rmse_feat.append(rmse_p_feat)
-    rmse_min_feat = np.argmin(rmse_feat) 
-
-    return rmse_min_estimator, rmse_estimator, estimator, rmse_min_depth, rmse_depth, depth, rmse_min_feat, rmse_feat, feat
-
-
-
-def calc_learning_curves(estimator, X_train, y_train, X_test, y_test):
-    #A learning curve shows the validation and training score of an estimator for varying numbers 
-    #of training samples. It is a tool to find out how much we benefit from adding more training 
-    #data and whether the estimator suffers more from a variance error or a bias error.
-    
-    train_score = []
-    test_score = []
-    training_set_sizes = np.linspace(5, len(X_train), 20, dtype='int')
-
-    for i in training_set_sizes:
-        # fit the model only using limited training examples
-        estimator.fit(X_train[0:i, :], y_train[0:i].flatten())
-        train_rmse = np.sqrt(metrics.mean_squared_error(y_train[0:i, :], estimator.predict(X_train[0:i, :])))
-        test_rmse = np.sqrt (metrics.mean_squared_error(y_test, estimator.predict(X_test)))
-
-        train_score.append(train_rmse)
-        test_score.append(test_rmse)
-    
-    return training_set_sizes, train_score, test_score
 
   
 def main():
@@ -275,33 +253,42 @@ def main():
     fueldata = fueldata.drop(columns = ['cherenkovnobeta'])
     print("Hello!")
     
-    #Split the full data set for furhter analysis. 
-    subfueldata = fueldata[fueldata['CT']>0*365].sample(n= 1000, random_state=1)
-    #subdata = subfueldata.loc[:,sel_cols]
+    #Split the full data set according to fuel parameter properties. 
+    #subfueldata = fueldata[fueldata['CT']>0*365].sample(n= 1000, random_state=1)
+    subfueldata = fueldata[(fueldata['CT']>0*365) & (fueldata['CT']<20*365)].sample(n=1000, random_state=1)
 
-    
-    #*******Explore the dataset using PCA*******  
-    #features = ('Cs137','Sr90','tau','cherenkov')
-    features  = ('Cs137','Cs134','Eu154','tau','cherenkov')
-    
+    #Define which features to use. "All" are all features, "X" are selected features, "Iso" are all gamma isotopes.
+    selectionAll   =['Cs137A','Cs134A','Eu154A','Zr95A','Nb95A','Ru106A','Ce141A','Ce144A','Sr90A','tau','cherenkov']
+    selectionAllIso=['Cs137A','Cs134A','Eu154A','Zr95A','Nb95A','Ru106A','Ce141A','Ce144A','Sr90A']
+
+    selectionIso=['Cs134','Eu154','Cs137'] 
+    #selectionIso=['Eu154','Cs137'] 
+    #selectionIso=['Cs137'] 
+
+    #selectionX  =['Cs137','tau','cherenkov']
+    #selectionX  =['Eu154','Cs137','tau','cherenkov']
+    #selectionX  =['Cs134','Eu154','Cs137','cherenkov']
+    selectionX  =['Cs134','Eu154','Cs137','tau','cherenkov']
+
+    features=list(selectionX)
+
+    #*******Explore the dataset using PCA*******         
     #Mean-center the data: Subtract the mean and then divide the result by the standard deviation
     #Reduce dimensionality of the data using decomposition into n_components
     X = subfueldata.loc[:,features].values
     X_std = StandardScaler().fit_transform(X)
-    pca = decomposition.PCA(n_components = 5)
+    pca = decomposition.PCA(n_components =len(features))
     pca.fit(X_std)
     Xt = pca.transform(X_std)
-    print("Explained variance ratio for the 5 components using PCA is:", pca.explained_variance_ratio_) 
+    print("Explained variance ratio for the components using PCA is:", pca.explained_variance_ratio_) 
 
     fig = plt.figure() 
     ax = fig.add_subplot(111, projection='3d')
-    #Do a scatter plot pf PC1-3 and color it with CT
     ax.scatter3D(Xt[:,0], Xt[:,1], Xt[:,2], c=subfueldata.CT, cmap='Greens')
     ax.set_xlabel('PC1')
     ax.set_ylabel('PC2')
     ax.set_zlabel('PC3')
-    #ax.set_title('PCA using Cs137, Sr90, tau and cherenkov')
-    ax.set_title('PCA using Cs137, Cs134, Eu154, tau and cherenkov')
+    ax.set_title('PCA using {0}'.format(features))
 
     #Visualize scores plot with two PC-scores using pca_with_scoresPlot
     #pca.components_ is the set of all eigenvectors (or loadings) for your projection space (one eigenvector for each PC).
@@ -315,32 +302,31 @@ def main():
     plt.show()
     
     #*******Start of REGRESSION part to predict IE, BU and CT values.*******
-    #Define features to use in analysis. All describes all features, X describes selected features, Iso describes gamma isotopes.
-    selectionAll=['Cs137A','Cs134A','Eu154A','Zr95A','Nb95A','Ru106A','Ce141A','Ce144A','Sr90A','tau','cherenkov']
-    selectionAllIso=['Cs137A','Cs134A','Eu154A','Zr95A','Nb95A','Ru106A','Ce141A','Ce144A','Sr90A']
-    selectionIso=['Cs137A','Cs134A','Eu154A'] 
-    selectionX  =['Cs137A','Cs134A','Eu154A','tau','cherenkov']
-    sel_cols= ('BU','CT','IE','Cs137A','Cs134A','Eu154A','tau','cherenkov')
-    
     #Use the gamma activities calculated from the atomic densities given in Serpent in units of 1e24/cm3.
     calculate_activity(subfueldata)
-    subdata = subfueldata.copy()
-    subdata = subdata.drop(columns=['fuelType','reactorType','Ce141','Nb95','Y91','Zr95','Ce144','Ru106','Sr90', 'Ce141A','Nb95A','Y91A','Zr95A','Ce144A','Ru106A','Sr90A'])
 
 #    for row in subfueldata.itertuples(index = True):   
-#        subfueldata['TotGamAct'] = subfueldata.apply(lambda row: row.Y91A+row.Zr95A+row.Nb95A+row.Ru106A+row.Cs134A+row.Cs137A+row.Eu154A+row.Ce141A+row.Ce144A+row.Sr90A, axis=1)
-#    #Set minimum activity level for gamma emitting isotopes to 0.1% of total activity
-#    gamma_emitting_isotopes = ('Y91A','Zr95A','Nb95A','Ru106A','Cs134A','Cs137A','Eu154A','Ce141A','Ce144A','Sr90A')
-#    for i in gamma_emitting_isotopes:
-#        for row in subdata.itertuples(index = True): 
-#            #if getattr(row, i)/getattr(row, 'TotGamAct')<0.001:
-#            num = subdata._get_numeric_data()
-#            num[num < 1.0e-20] = 0.0
-
+#        subdata['TotGamAct'] = subfueldata.apply(lambda row: row.Y91A+row.Zr95A+row.Nb95A+row.Ru106A+row.Cs134A+row.Cs137A+row.Eu154A+row.Ce141A+row.Ce144A+row.Sr90A, axis=1)
+#    for i in features:
+#        for row in subfueldata.itertuples(index=True): 
+#            if row[i]< 1.0e-10:
+#                print(i, row[i])
+##            if subfueldata[row,i]< 1.0e-10:
+##                subfueldata.iat[row, i]=0.0
     
+#    for row in subfueldata.itertuples(index=True): 
+#        print(row.Cs134A, row.Cs137A)
+#        if row.Nb95A< 1.0e-10: #Or if row.Nb95A/row.TotGamAct<0.01
+#            subfueldata.at[row.Index, 'Nb95A'] = 0.0
+          
+    #subfueldata = subfueldata.drop(columns=['fuelType','reactorType','Ce141','Nb95','Y91','Zr95','Ce144','Ru106','Sr90', 'Ce141A','Nb95A','Y91A','Zr95A','Ce144A','Ru106A','Sr90A'])
+   
     #Split the data into a training DataFrame and test DataFrame. Training size is 80% of original data.
-    traindf, testdf = train_test_split(subdata, random_state=0, test_size=0.2)
-    norm_traindf = normalize_activities(traindf,selectionIso)
+    traindf, testdf = train_test_split(subfueldata, random_state=0, test_size=0.2)
+ 
+    testdf = applynoise(testdf, selectionAll)
+
+    norm_traindf= normalize_activities(traindf,selectionIso)
     norm_testdf = normalize_activities(testdf,selectionIso)
 
     #Create training and test data with gamma isotopes, neutron signature and cherenkov light.
@@ -380,7 +366,7 @@ def main():
     plt.subplot(131)
     plt.semilogy(setSizeCT, trainScoreCT, c='gold')
     plt.semilogy(setSizeCT, testScoreCT, c='steelblue')
-    plt.legend(['Training set', 'Validation set'], fontsize=12)
+    plt.legend(['Training set', 'Validation set'])
     plt.xlabel('Dataset')
     plt.ylabel('RMSE')
     plt.title('Learning Curve CT')
@@ -388,7 +374,7 @@ def main():
     plt.subplot(132)
     plt.semilogy(setSizeBU, trainScoreBU, c='gold')
     plt.semilogy(setSizeBU, testScoreBU, c='steelblue')
-    plt.legend(['Training set', 'Validation set'])#, fontsize=12)
+    plt.legend(['Training set', 'Validation set'])
     plt.xlabel('Dataset')
     plt.ylabel('RMSE')
     plt.title('Learning Curve BU')
@@ -396,18 +382,18 @@ def main():
     plt.subplot(133)
     plt.semilogy(setSizeIE, trainScoreIE, c='gold')
     plt.semilogy(setSizeIE, testScoreIE, c='steelblue')
-    plt.legend(['Training set', 'Validation set'], fontsize=12)
+    plt.legend(['Training set', 'Validation set'])
     plt.xlabel('Dataset')
     plt.ylabel('RMSE')
     plt.title('Learning Curve IE')
     plt.show()
 
-    #*********************************************   
+    #*********************************************  
     #Investigare under- and overfitting
     print('Study overfitting...')
-    RMSE_min_est_CT, RMSE_est_CT, est_CT, RMSE_min_dep_CT, RMSE_dep_CT, dep_CT, RMSE_min_feat_CT, RMSE_feat_CT, feat_CT  = under_or_overfitting(Xtrainf, YCTtrain, Xtestf, YCTtest)
-    RMSE_min_est_BU, RMSE_est_BU, est_BU, RMSE_min_dep_BU, RMSE_dep_BU, dep_BU, RMSE_min_feat_BU, RMSE_feat_BU, feat_BU  = under_or_overfitting(Xtrainf, YBUtrain, Xtestf, YBUtest)
-    RMSE_min_est_IE, RMSE_est_IE, est_IE, RMSE_min_dep_IE, RMSE_dep_IE, dep_IE, RMSE_min_feat_IE, RMSE_feat_IE, feat_IE  = under_or_overfitting(Xtrainf, YIEtrain, Xtestf, YIEtest)
+    RMSE_min_est_CT, RMSE_est_CT, est_CT, RMSE_min_dep_CT, RMSE_dep_CT, dep_CT, RMSE_min_feat_CT, RMSE_feat_CT, feat_CT  = under_or_overfitting(Xtrainf, YCTtrain, Xtestf, YCTtest, features)
+    RMSE_min_est_BU, RMSE_est_BU, est_BU, RMSE_min_dep_BU, RMSE_dep_BU, dep_BU, RMSE_min_feat_BU, RMSE_feat_BU, feat_BU  = under_or_overfitting(Xtrainf, YBUtrain, Xtestf, YBUtest, features)
+    RMSE_min_est_IE, RMSE_est_IE, est_IE, RMSE_min_dep_IE, RMSE_dep_IE, dep_IE, RMSE_min_feat_IE, RMSE_feat_IE, feat_IE  = under_or_overfitting(Xtrainf, YIEtrain, Xtestf, YIEtest, features)
     
     fig = plt.figure(figsize=(10,3))
     plt.subplot(131)   
@@ -434,7 +420,7 @@ def main():
     fig = plt.figure(figsize=(10,3))
     plt.subplot(131)   
     plt.plot(dep_CT, np.array(RMSE_dep_CT), '-v', color = 'blue', mfc='blue', ms=1)
-    plt.plot(dep_CT[RMSE_min_dep_CT], np.array(RMSE_dep_CT)[RMSE_min_dep_CT], 'P', ms=5, mfc='red')
+    plt.plot(dep_CT[RMSE_min_dep_CT], np.array(RMSE_dep_CT)[RMSE_min_dep_CT], 'P', ms=7, mfc='red')
     plt.xlabel('max_depth for CT')
     plt.ylabel('RMSE')
     plt.title('RandomForest')    
@@ -456,7 +442,7 @@ def main():
     fig = plt.figure(figsize=(10,3))
     plt.subplot(131)   
     plt.plot(feat_CT, np.array(RMSE_feat_CT), '-v', color = 'blue', mfc='blue', ms=1)
-    plt.plot(feat_CT[RMSE_min_feat_CT], np.array(RMSE_feat_CT)[RMSE_min_feat_CT], 'P', ms=5, mfc='red')
+    plt.plot(feat_CT[RMSE_min_feat_CT], np.array(RMSE_feat_CT)[RMSE_min_feat_CT], 'P', ms=7, mfc='red')
     plt.xlabel('max_features for CT')
     plt.ylabel('RMSE')
     plt.title('RandomForest')   
@@ -478,42 +464,43 @@ def main():
     #Optimise Random Forest regression   
     print('Hyperparameter optimisation...')
     #print('Grid optimization for CT...')
-    bestParamsCT, bestResultsCT, bestEstimatorCT = Grid_Search_CV_RFR(Xtrainf, YCTtrain, Xtestf, YCTtest, selectionX)   
-    bestParamsBU, bestResultsBU, bestEstimatorBU = Grid_Search_CV_RFR(Xtrainf, YBUtrain, Xtestf, YBUtest, selectionX)  
-    bestParamsIE, bestResultsIE, bestEstimatorIE = Grid_Search_CV_RFR(Xtrainf, YIEtrain, Xtestf, YIEtest, selectionX)  
-    print ('bestParam for CTs=', bestParamsCT)
-    print ('bestParam for BUs=', bestParamsBU)
-    print ('bestParam for IEs=', bestParamsIE)
+    bestParamsCT, bestResultsCT, bestEstimatorCT = Grid_Search_CV_RFR(Xtrainf, YCTtrain, Xtestf, YCTtest)   
+    bestParamsBU, bestResultsBU, bestEstimatorBU = Grid_Search_CV_RFR(Xtrainf, YBUtrain, Xtestf, YBUtest)  
+    bestParamsIE, bestResultsIE, bestEstimatorIE = Grid_Search_CV_RFR(Xtrainf, YIEtrain, Xtestf, YIEtest) 
+    #print ('bestParam for CTs=', bestParamsCT)
+    #print ('bestParam for BUs=', bestParamsBU)
+    #print ('bestParam for IEs=', bestParamsIE)
     #print('bestResult for CT=', bestResults)  
 
-    feature_name=('Cs137A','Cs134A','Eu154A','tau','cherenkov') 
-    df = subdata[['Cs137A','Cs134A','Eu154A','tau','cherenkov']]
-    f_CT=df.columns
-    i_CT=bestEstimatorCT.feature_importances_
-    i_BU=bestEstimatorBU.feature_importances_
-    i_IE=bestEstimatorCT.feature_importances_
+    df = subfueldata[selectionX]
+    i_CT=bestEstimatorCT.feature_importances_  #Numerical values of feature importances starting with the most important one
+    i_BU=bestEstimatorBU.feature_importances_  #The name for each feature is the same as in the order in "features"
+    i_IE=bestEstimatorIE.feature_importances_
     pos = np.arange(len(i_CT))
+    print('pos=', pos)
+    print(i_CT)
+    print(features)
 
     fig = plt.figure(figsize=(10,3))
     plt.subplot(131)
     plt.bar(pos, i_CT)
-    plt.xticks(pos, feature_name, rotation=45)
+    plt.xticks(pos, features, rotation=45)
     plt.title('Feature importance CT')
     plt.subplot(132)
     plt.bar(pos, i_BU)
-    plt.xticks(pos, feature_name, rotation=45)
+    plt.xticks(pos, features, rotation=45)
     plt.title('Feature importance BU')
     plt.subplot(133)
     plt.bar(pos, i_IE)
-    plt.xticks(pos, feature_name, rotation=45)
+    plt.xticks(pos, features, rotation=45)
     plt.title('Feature importance IE')
+    plt.show()
     
     #*********************************************
     #Do random forest regression using optimized hyperparameters from Grid search
-    #In order to use best parameters, import these manuallt to the method "RndForReg"
-    yCT_predicted, rCT = RndForReg(Xtrainf, YCTtrain, Xtestf, YCTtest, bestParamsCT)
-    yBU_predicted, rBU = RndForReg(Xtrainf, YBUtrain, Xtestf, YBUtest, bestParamsBU)
-    yIE_predicted, rIE = RndForReg(Xtrainf, YIEtrain, Xtestf, YIEtest, bestParamsIE)
+    yCT_predicted, rCT = RndForReg(Xtrainf, YCTtrain, Xtestf, YCTtest, bestParamsCT, features)
+    yBU_predicted, rBU = RndForReg(Xtrainf, YBUtrain, Xtestf, YBUtest, bestParamsBU, features)
+    yIE_predicted, rIE = RndForReg(Xtrainf, YIEtrain, Xtestf, YIEtest, bestParamsIE, features)
     print('Test CT RMSE RndFor:', np.sqrt(metrics.mean_squared_error(YCTtest, yCT_predicted)), "days")      
     print('Test BU RMSE RndFor:', np.sqrt(metrics.mean_squared_error(YBUtest, yBU_predicted)), "MWd/kgU")       
     print('Test IE RMSE RndFor:', np.sqrt(metrics.mean_squared_error(YIEtest, yIE_predicted)), "%")   
